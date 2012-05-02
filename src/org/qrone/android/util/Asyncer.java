@@ -69,7 +69,7 @@ public class Asyncer{
 	}
 	
 	public Asyncer brancher(final Task... runs){
-		final Asyncer a = new Brancher(root, runs, h);
+		final Asyncer a = new Brancher(root, runs, false, h);
 		child = a;
 		return a;
 	}
@@ -175,18 +175,21 @@ public class Asyncer{
 		private Handler h;
 		private AtomicInteger ai;
 		private Task[] runs;
-		public Brancher(Asyncer root, final Task[] runs, Handler h){
+		private boolean uithread;
+		public Brancher(Asyncer root, final Task[] runs, boolean uithread, Handler h){
 			super(root, null, h);
 			this.runs = runs;
 			this.ai = new AtomicInteger(runs.length);
 			this.h = h;
+			this.uithread = uithread;
 		}
 
 		@Override
 		public void run(final Flag r){
 			for (int i = 0; i < runs.length; i++) {
 				final int idx = i;
-				Asyncer a = new Asyncer(Brancher.this.root, new Asyncer.Task() {
+				
+				Task task = new Task() {
 					@Override
 					public void run(Asyncer a, Flag f) {
 						Brancher.this.runs[idx].run(Brancher.this, r);
@@ -195,8 +198,15 @@ public class Asyncer{
 							Brancher.this.runChild(r);
 						}
 					}
-				},h);
-				a.run(r);
+				};
+				
+				if(uithread){
+					Asyncer as = new Drawer(root, task, h);
+					as.run(r);
+				}else{
+					Asyncer as = new Worker(root, task, h);
+					as.run(r);
+				}
 			}
 		}
 	}
