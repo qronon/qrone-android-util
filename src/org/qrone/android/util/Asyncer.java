@@ -13,80 +13,74 @@ import android.os.Handler;
 public class Asyncer{
 	private Handler h;
 	protected Asyncer root;
-	protected List<Asyncer> childs = new ArrayList<Asyncer>();
-	protected Task run;
+	protected Asyncer child;
+	protected Task task;
 
 	public Asyncer(){
 		this.root = this;
 		this.h = new Handler();
 	}
-	
-	protected Asyncer(Task run, Handler h){
-		this.run = run;
-		this.root = this;
-		this.h = h;
-	}
 
 	protected Asyncer(Asyncer root, Task run, Handler h){
 		this.root = root;
-		this.run = run;
+		this.task = run;
 		this.h = h;
 	}
 
+	public Asyncer add(final Asyncer addtask){
+		Asyncer a = new Asyncer(root, new Task() {
+			@Override
+			public void run(Asyncer a, final Flag f) {
+				Flag fl = addtask.worker(new Task() {
+					@Override
+					public void run(Asyncer a, Flag f) {
+						Asyncer.this.runChild(f);
+					}
+				}).go();
+				f.addFlag(fl);
+			}
+		}, h);
+		child = a;
+		return a;
+	}
+	
 	public Asyncer worker(Task run){
-		Asyncer a = new Asyncer(root, run, h);
-		childs.add(a);
+		Asyncer a = new Worker(root, run, h);
+		child = a;
 		return a;
 	}
 	
 	public Asyncer drawer(Task run){
 		Asyncer a = new Drawer(root, run, h);
-		childs.add(a);
+		child = a;
 		return a;
 	}
 
+	public Asyncer loopworker(final Loop run){
+		Asyncer a = new Looper(root, run, false, h);
+		child = a;
+		return a;
+	}
+	
 	public Asyncer loopdrawer(final Loop run){
 		Asyncer a = new Looper(root, run, true, h);
-		childs.add(a);
+		child = a;
 		return a;
 	}
 	
-	public Asyncer loop(final Loop run){
-		Asyncer a = new Looper(root, run, false, h);
-		childs.add(a);
-		return a;
-	}
-	
-	public Asyncer branch(final Task... runs){
-		final AtomicInteger ai = new AtomicInteger(runs.length);
-		final Asyncer a = new Brancher(root, ai, runs, h);
-		childs.add(a);
+	public Asyncer brancher(final Task... runs){
+		final Asyncer a = new Brancher(root, runs, h);
+		child = a;
 		return a;
 	}
 	
 	public void run(final Flag r){
-		if(run != null){
-			AsyncTask<Integer, Integer, Integer> async 
-					= new AsyncTask<Integer, Integer, Integer>(){
-				@Override
-				protected Integer doInBackground(Integer... params) {
-					run.task(Asyncer.this, r);
-					runChild(r);
-					return null;
-				}
-				
-			};
-			async.execute(1);
-		}else{
-			runChild(r);
-		}
+		task.run(this, r);
 	}
 	
 	protected void runChild(Flag r){
-		if(childs.size() > 0 && r.runnable){
-			for (Iterator<Asyncer> ite = childs.iterator(); ite.hasNext();) {
-				ite.next().run(r);
-			}
+		if(child !=null && !r.isStopped()){
+			child.run(r);
 		}
 	}
 	
@@ -101,10 +95,23 @@ public class Asyncer{
 	}
 
 	public class Flag{
-		public Map<String, Object> map = new HashMap<String, Object>();
-		public boolean runnable = true;
+		private Map<String, Object> map = new HashMap<String, Object>();
+		private boolean abort = false;
+		private List<Flag> childs = new ArrayList<Flag>();
+		
 		public void stop(){
-			runnable = false;
+			abort = true;
+			for (Iterator<Flag> iter = childs.iterator(); iter.hasNext();) {
+				iter.next().stop();
+			}
+		}
+		
+		public void addFlag(Flag fl) {
+			childs.add(fl);
+		}
+
+		public boolean isStopped(){
+			return abort;
 		}
 
 		public void set(String key, Object value){
@@ -117,7 +124,7 @@ public class Asyncer{
 	}
 	
 	public static interface Task{
-		public void task(Asyncer a, Flag f);
+		public void run(Asyncer a, Flag f);
 	}
 	
 	public static interface Loop{
@@ -137,101 +144,93 @@ public class Asyncer{
 
 		@Override
 		public void run(final Flag r){
-			Asyncer a = new Asyncer(new LoopTask(this, uithread, loop, new Runnable() {
+			if(r.isStopped()){
+				return;
+			}
+			
+			Asyncer.Task task = new Asyncer.Task() {
+				
 				@Override
-				public void run() {
-					Looper.this.runChild(r);
+				public void run(Asyncer a, Flag f) {
+					boolean result = loop.loop(Looper.this, r);
+					if(result){
+						Looper.this.run(r);
+					}else{
+						Looper.this.runChild(r);
+					}
 				}
-			},h ), h);
-			a.run(r);
-		}
-	}
-
-	private static class LoopTask implements Task {
-		private Handler h;
-		private Asyncer current;
-		private Loop run;
-		private Runnable complete;
-		private boolean uithread;
-		public LoopTask(Asyncer current, boolean uithread, Loop run, Runnable complete, Handler h){
-			this.current = current;
-			this.run = run;
-			this.complete = complete;
-			this.uithread = uithread;
-			this.h = h;
-		}
-		
-		@Override
-		public void task(Asyncer acync, Flag r) {
-			boolean result = run.loop(current, r);
-			if(result){
-				if(uithread){
-					Asyncer a = new Drawer(new LoopTask(current, uithread, run, complete, h), h);
-					a.run(r);
-				}else{
-					Asyncer a = new Asyncer(new LoopTask(current, uithread, run, complete, h), h);
-					a.run(r);
-				}
+			};
+			
+			if(uithread){
+				Asyncer as = new Drawer(root, task, h);
+				as.run(r);
 			}else{
-				complete.run();
+				Asyncer as = new Worker(root, task, h);
+				as.run(r);
 			}
 		}
-		
 	}
+	
 	private static class Brancher extends Asyncer {
 		private Handler h;
 		private AtomicInteger ai;
 		private Task[] runs;
-		public Brancher(Asyncer root, final AtomicInteger ai, final Task[] runs, Handler h){
+		public Brancher(Asyncer root, final Task[] runs, Handler h){
 			super(root, null, h);
 			this.runs = runs;
-			this.ai = ai;
+			this.ai = new AtomicInteger(runs.length);
 			this.h = h;
 		}
 
 		@Override
 		public void run(final Flag r){
 			for (int i = 0; i < runs.length; i++) {
-				Asyncer a = new Asyncer(new BranchTask(this,ai,runs[i],new Runnable() {
+				final int idx = i;
+				Asyncer a = new Asyncer(Brancher.this.root, new Asyncer.Task() {
 					@Override
-					public void run() {
-						Brancher.this.runChild(r);
+					public void run(Asyncer a, Flag f) {
+						Brancher.this.runs[idx].run(Brancher.this, r);
+						int now = ai.decrementAndGet();
+						if(now <= 0){
+							Brancher.this.runChild(r);
+						}
 					}
-				}), h);
+				},h);
 				a.run(r);
 			}
 		}
 	}
-	
-	private static class BranchTask implements Task {
-		private Asyncer current;
-		private AtomicInteger ai;
-		private Task run;
-		private Runnable complete;
-		public BranchTask(Asyncer current, AtomicInteger ai, Task run, Runnable complete){
-			this.current = current;
-			this.ai = ai;
-			this.run = run;
-			this.complete = complete;
-		}
+
+	private static class Worker extends Asyncer {
+		private Handler h;
 		
+		public Worker(Asyncer root, Task run, Handler h){
+			super(root, run, h);
+			this.h = h;
+		}
+
 		@Override
-		public void task(Asyncer acync, Flag r) {
-			run.task(current, r);
-			int now = ai.decrementAndGet();
-			if(now <= 0){
-				complete.run();
+		public void run(final Flag r){
+			if(task != null){
+				AsyncTask<Integer, Integer, Integer> async 
+						= new AsyncTask<Integer, Integer, Integer>(){
+					@Override
+					protected Integer doInBackground(Integer... params) {
+						task.run(Worker.this, r);
+						runChild(r);
+						return null;
+					}
+					
+				};
+				async.execute(1);
+			}else{
+				runChild(r);
 			}
 		}
-		
 	}
 	
 	private static class Drawer extends Asyncer {
 		private Handler h;
-		public Drawer(Task run, Handler h){
-			super(run, h);
-			this.h = h;
-		}
 		
 		public Drawer(Asyncer root, Task run, Handler h){
 			super(root, run, h);
@@ -240,11 +239,11 @@ public class Asyncer{
 
 		@Override
 		public void run(final Flag r){
-			if(run != null){
+			if(task != null){
 				h.post(new Runnable() {
 					@Override
 					public void run() {
-						run.task(Drawer.this, r);
+						task.run(Drawer.this, r);
 						Drawer.this.runChild(r);
 					}
 				});
