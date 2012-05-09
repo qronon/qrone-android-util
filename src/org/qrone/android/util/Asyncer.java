@@ -7,10 +7,17 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicInteger;
 
+import android.app.ProgressDialog;
+import android.content.Context;
 import android.os.AsyncTask;
+import android.os.Bundle;
 import android.os.Handler;
+import android.view.View;
+import android.view.View.OnClickListener;
+import android.view.View.OnLongClickListener;
 
-public class Asyncer{
+public class Asyncer implements OnClickListener, OnLongClickListener{
+
 	private Handler h;
 	protected Asyncer root;
 	protected Asyncer child;
@@ -28,20 +35,28 @@ public class Asyncer{
 	}
 
 	public Asyncer add(final Asyncer addtask){
-		Asyncer a = new Asyncer(root, new Task() {
+		final Asyncer achild = new Asyncer(root, null, h){
 			@Override
-			public void run(Asyncer a, final Flag f) {
-				Flag fl = addtask.worker(new Task() {
-					@Override
-					public void run(Asyncer a, Flag f) {
-						Asyncer.this.runChild(f);
-					}
-				}).go();
-				f.addFlag(fl);
+			public int size() {
+				if(this.child != null)
+					return addtask.root.size() + this.child.size();
+				else
+					return addtask.root.size();
 			}
-		}, h);
-		child = a;
-		return a;
+		};
+		achild.task = new Task() {
+			@Override
+			public void run(final Flag f) {
+				addtask.worker(new Task() {
+					@Override
+					public void run(Flag flag) {
+						achild.runChild(f);
+					}
+				}).go(f);
+			}
+		};
+		child = achild;
+		return achild;
 	}
 	
 	public Asyncer worker(Task run){
@@ -75,12 +90,20 @@ public class Asyncer{
 	}
 	
 	public void run(final Flag r){
-		task.run(this, r);
+		r.proceed(1);
+		if(task != null){
+			task.run(r);
+		}else{
+			runChild(r);
+		}
 	}
 	
 	protected void runChild(Flag r){
-		if(child !=null && !r.isStopped()){
+		if(r.isStopped()) return;
+		if(child !=null){
 			child.run(r);
+		}else{
+			r.complete();
 		}
 	}
 	
@@ -88,26 +111,97 @@ public class Asyncer{
 		if(root != null && root != this){
 			return root.go();
 		}else{
-			Flag f = new Flag();
-			run(f);
-			return f;
+			return new Flag(this).go();
 		}
 	}
 
+	protected Flag go(Flag f){
+		if(root != null && root != this){
+			return root.go(f);
+		}else{
+			return new Flag(this,f).go();
+		}
+	}
+	
+	public Dialog progress(Context context, String msg){
+		if(root != null && root != this){
+			return root.progress(context,msg);
+		}else{
+			Dialog d = new Dialog(context, new Flag(this));
+			d.setProgressStyle(ProgressDialog.STYLE_HORIZONTAL);
+			d.setMessage(msg);
+			d.setCancelable(false);
+			return d;
+		}
+	}
+
+	public Dialog progress(Context context, String msg, int theme){
+		if(root != null && root != this){
+			return root.progress(context,msg,theme);
+		}else{
+			Dialog d = new Dialog(context, theme, new Flag(this));
+			d.setProgressStyle(ProgressDialog.STYLE_HORIZONTAL);
+			d.setMessage(msg);
+			d.setCancelable(false);
+			return d;
+		}
+	}
+	
 	public class Flag{
+		private int size = -1;
+		private int progress = 0;
+		private Asyncer root;
 		private Map<String, Object> map = new HashMap<String, Object>();
 		private boolean abort = false;
-		private List<Flag> childs = new ArrayList<Flag>();
+		private Flag parent;
+		private List<Asyncer.Listener> listeners = new ArrayList<Asyncer.Listener>();
 		
-		public void stop(){
-			abort = true;
-			for (Iterator<Flag> iter = childs.iterator(); iter.hasNext();) {
-				iter.next().stop();
+		public Flag(Asyncer root){
+			this.root = root;
+		}
+		
+		public Flag(Asyncer root, Flag f) {
+			this.root = root;
+			this.parent = f;
+		}
+
+		public Flag go(){
+			root.run(this);
+			return this;
+		}
+		
+		public void complete(){
+			for (Iterator<Asyncer.Listener> iter = listeners.iterator(); iter.hasNext();) {
+				iter.next().completed();
 			}
 		}
 		
-		public void addFlag(Flag fl) {
-			childs.add(fl);
+		public void stop(){
+			abort = true;
+			for (Iterator<Asyncer.Listener> iter = listeners.iterator(); iter.hasNext();) {
+				iter.next().stoped();
+			}
+		}
+
+		public int size(){
+			if(size < 0){
+				size = root.size();
+			}
+			return size;
+		}
+		
+		public void proceed(int n){
+			if(parent != null)
+				parent.proceed(n);
+			
+			progress += n;
+			for (Iterator<Asyncer.Listener> iter = listeners.iterator(); iter.hasNext();) {
+				iter.next().progress(progress);
+			}
+		}
+		
+		public void addAsyncerListener(Asyncer.Listener l){
+			listeners.add(l);
 		}
 
 		public boolean isStopped(){
@@ -121,14 +215,59 @@ public class Asyncer{
 		public Object get(String key){
 			return map.get(key);
 		}
+		
+		public Asyncer getRoot(){
+			return root;
+		}
+	}
+	
+	public static class Dialog extends ProgressDialog implements Listener{
+		private Flag f;
+		private int size;
+		public Dialog(Context context, Flag f) {
+			super(context);
+			this.f = f;
+			init();
+		}
+		
+		public Dialog(Context context, int theme, Flag f) {
+			super(context,theme);
+			this.f = f;
+			init();
+		}
+
+		public Flag go(){
+			show();
+			return f.go();
+		}
+		
+		public void init(){
+			f.addAsyncerListener(this);
+			setMax(f.size());
+		}
+
+		@Override
+		public void completed() {
+			dismiss();
+		}
+		
+		@Override
+		public void stoped() {
+			dismiss();
+		}
+
+		@Override
+		public void progress(int n) {
+			setProgress(n);
+		}
 	}
 	
 	public static interface Task{
-		public void run(Asyncer a, Flag f);
+		public void run(Flag f);
 	}
 	
 	public static interface Loop{
-		public boolean loop(Asyncer a, Flag f);
+		public boolean loop(Flag f);
 	}
 	
 	private static class Looper extends Asyncer {
@@ -151,11 +290,12 @@ public class Asyncer{
 			Asyncer.Task task = new Asyncer.Task() {
 				
 				@Override
-				public void run(Asyncer a, Flag f) {
-					boolean result = loop.loop(Looper.this, r);
+				public void run(Flag f) {
+					boolean result = loop.loop(r);
 					if(result){
 						Looper.this.run(r);
 					}else{
+						r.proceed(1);
 						Looper.this.runChild(r);
 					}
 				}
@@ -184,6 +324,13 @@ public class Asyncer{
 			this.uithread = uithread;
 		}
 
+		public int size() {
+			if(child != null)
+				return runs.length + child.size();
+			else
+				return runs.length;
+		}
+		
 		@Override
 		public void run(final Flag r){
 			for (int i = 0; i < runs.length; i++) {
@@ -191,8 +338,9 @@ public class Asyncer{
 				
 				Task task = new Task() {
 					@Override
-					public void run(Asyncer a, Flag f) {
-						Brancher.this.runs[idx].run(Brancher.this, r);
+					public void run(Flag f) {
+						Brancher.this.runs[idx].run(r);
+						r.proceed(1);
 						int now = ai.decrementAndGet();
 						if(now <= 0){
 							Brancher.this.runChild(r);
@@ -226,7 +374,8 @@ public class Asyncer{
 						= new AsyncTask<Integer, Integer, Integer>(){
 					@Override
 					protected Integer doInBackground(Integer... params) {
-						task.run(Worker.this, r);
+						task.run(r);
+						r.proceed(1);
 						runChild(r);
 						return null;
 					}
@@ -253,7 +402,8 @@ public class Asyncer{
 				h.post(new Runnable() {
 					@Override
 					public void run() {
-						task.run(Drawer.this, r);
+						task.run(r);
+						r.proceed(1);
 						Drawer.this.runChild(r);
 					}
 				});
@@ -262,4 +412,29 @@ public class Asyncer{
 			}
 		}
 	}
+
+	public int size() {
+		if(child != null)
+			return 1 + child.size();
+		else
+			return 1;
+	}
+	
+	@Override
+	public boolean onLongClick(View v) {
+		go();
+		return true;
+	}
+	
+	@Override
+	public void onClick(View v) {
+		go();
+	}
+	
+	public interface Listener {
+		public void progress(int n);
+		public void stoped();
+		public void completed();
+	}
+	
 }
