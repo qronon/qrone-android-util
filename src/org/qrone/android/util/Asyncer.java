@@ -9,6 +9,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 import android.app.ProgressDialog;
 import android.content.Context;
+import android.content.DialogInterface;
 import android.os.AsyncTask;
 import android.os.Bundle;
 import android.os.Handler;
@@ -146,6 +147,30 @@ public class Asyncer implements OnClickListener, OnLongClickListener{
 			return d;
 		}
 	}
+
+	public Dialog spinner(Context context, String msg){
+		if(root != null && root != this){
+			return root.progress(context,msg);
+		}else{
+			Dialog d = new Dialog(context, new Flag(this));
+			d.setProgressStyle(ProgressDialog.STYLE_SPINNER);
+			d.setMessage(msg);
+			d.setCancelable(false);
+			return d;
+		}
+	}
+
+	public Dialog spinner(Context context, String msg, int theme){
+		if(root != null && root != this){
+			return root.progress(context,msg,theme);
+		}else{
+			Dialog d = new Dialog(context, theme, new Flag(this));
+			d.setProgressStyle(ProgressDialog.STYLE_SPINNER);
+			d.setMessage(msg);
+			d.setCancelable(false);
+			return d;
+		}
+	}
 	
 	public class Flag{
 		private int size = -1;
@@ -244,6 +269,12 @@ public class Asyncer implements OnClickListener, OnLongClickListener{
 		public void init(){
 			f.addAsyncerListener(this);
 			setMax(f.size());
+			setOnCancelListener(new OnCancelListener() {
+				@Override
+				public void onCancel(DialogInterface dialog) {
+					f.stop();
+				}
+			});
 		}
 
 		@Override
