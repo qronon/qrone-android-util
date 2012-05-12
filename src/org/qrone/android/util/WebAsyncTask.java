@@ -13,10 +13,10 @@ import org.apache.http.HttpResponse;
 import org.apache.http.HttpStatus;
 import org.apache.http.client.methods.HttpGet;
 import org.apache.http.impl.client.DefaultHttpClient;
+import org.qrone.util.Adapter;
 import org.qrone.util.BranchReader;
 import org.qrone.util.Stream;
 
-import android.graphics.Bitmap;
 import android.os.AsyncTask;
 
 public abstract class WebAsyncTask extends AsyncTask<WebSource, Integer, String[]> {
@@ -59,6 +59,8 @@ public abstract class WebAsyncTask extends AsyncTask<WebSource, Integer, String[
 			
 			if(inf == null){
 				try{
+					if(dhc == null)
+						dhc = Adapter.http();
 					HttpResponse httpResponse = dhc.execute(new HttpGet(source.getURL()));
 					if (httpResponse.getStatusLine().getStatusCode() == HttpStatus.SC_OK) {
 						HttpEntity httpEntity = httpResponse.getEntity();

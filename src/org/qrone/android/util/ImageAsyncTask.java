@@ -11,6 +11,7 @@ import org.apache.http.HttpResponse;
 import org.apache.http.HttpStatus;
 import org.apache.http.client.methods.HttpGet;
 import org.apache.http.impl.client.DefaultHttpClient;
+import org.qrone.util.Adapter;
 import org.qrone.util.BranchInputStream;
 
 import android.graphics.Bitmap;
@@ -49,7 +50,7 @@ public abstract class ImageAsyncTask extends AsyncTask<WebSource, Integer, Bitma
 			try{
 				if(inf == null){
 						if(dhc == null)
-							dhc = new DefaultHttpClient();
+							dhc = Adapter.http();
 						HttpResponse httpResponse = dhc.execute(new HttpGet(source.getURL()));
 						if (httpResponse.getStatusLine().getStatusCode() == HttpStatus.SC_OK) {
 							HttpEntity httpEntity = httpResponse.getEntity();
